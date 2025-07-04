@@ -58,6 +58,21 @@
                 android:padding="5dp"
                 android:src="@drawable/spotbeam_marker_icon" />
 
+            <!--
+                This is the new button to launch the Co-Opt feature.
+                It uses the Sheriff's badge icon and is positioned to the left of the settings icon.
+            -->
+            <ImageButton
+                android:id="@+id/coOptButton"
+                style="@style/darkButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginTop="3dp"
+                android:layout_toStartOf="@id/ivSettings"
+                android:contentDescription="Co-Opt a callsign"
+                android:padding="5dp"
+                android:src="@drawable/ic_sheriff_badge" />
+
             <ImageView
                 android:id="@+id/ivSettings"
                 android:layout_width="40dp"
@@ -137,5 +152,20 @@
         android:id="@+id/sbmainll"
         layout="@layout/spot_beam_layout"
         android:visibility="gone" />
+
+    <!-- This comment describes the included Co-Opt list layout. -->
+    <include
+        android:id="@+id/ilCoOpt"
+        layout="@layout/co_opt_layout"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/co_opt_next_update_textview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:padding="8dp"
+        android:text=""
+        android:visibility="gone"/>
 
 </LinearLayout>

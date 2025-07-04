@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.text.InputType
 import android.util.Base64
 import android.util.Log
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -33,6 +34,7 @@ import com.atakmap.android.soothsayer.interfaces.CloudRFLayerListener
 import com.atakmap.android.soothsayer.layers.CloudRFLayer
 import com.atakmap.android.soothsayer.layers.GLCloudRFLayer
 import com.atakmap.android.soothsayer.layers.PluginMapOverlay
+import com.atakmap.android.soothsayer.models.common.CoOptedMarkerSettings
 import com.atakmap.android.soothsayer.models.common.MarkerDataModel
 import com.atakmap.android.soothsayer.models.linksmodel.*
 import com.atakmap.android.soothsayer.models.request.Bounds
@@ -47,6 +49,7 @@ import com.atakmap.android.soothsayer.models.response.TemplatesResponseItem
 import com.atakmap.android.soothsayer.network.remote.RetrofitClient
 import com.atakmap.android.soothsayer.network.repository.PluginRepository
 import com.atakmap.android.soothsayer.plugin.R
+import com.atakmap.android.soothsayer.recyclerview.CoOptAdapter
 import com.atakmap.android.soothsayer.recyclerview.RecyclerViewAdapter
 import com.atakmap.android.soothsayer.util.*
 import com.atakmap.android.util.SimpleItemSelectedListener
@@ -59,8 +62,13 @@ import java.io.*
 import java.lang.Math.sqrt
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
 import kotlin.math.ceil
 import kotlin.math.min
+import android.os.Handler
+import android.os.Looper
+import com.atakmap.android.maps.PointMapItem
 
 class PluginDropDownReceiver (
     mapView: MapView?,
@@ -74,6 +82,7 @@ class PluginDropDownReceiver (
     private val mainLayout: LinearLayout = templateView.findViewById(R.id.llMain)
     private val settingView = templateView.findViewById<LinearLayout>(R.id.ilSettings)
     private val radioSettingView = templateView.findViewById<LinearLayout>(R.id.ilRadioSetting)
+    private val coOptView: View = templateView.findViewById(R.id.ilCoOpt)
     private val svMode: Switch = settingView.findViewById(R.id.svMode)
     private val cbCoverageLayer: CheckBox = settingView.findViewById(R.id.cbKmzLayer)
     private val cbLinkLines: CheckBox = settingView.findViewById(R.id.cbLinkLines)
@@ -96,6 +105,19 @@ class PluginDropDownReceiver (
     private var lineGroup: MapGroup? = null
     private var itemPositionForEdit: Int = -1
     private val serverTypes: ArrayList<String> = ArrayList()
+
+    // This comment describes the purpose of the coOptedMarkers map.
+    // This map stores the settings for each marker that has been co-opted.
+    // The key is the marker's UID, and the value is the settings object.
+    private val coOptedMarkers = HashMap<String, CoOptedMarkerSettings>()
+
+    // This comment describes the purpose of the tracking handler and runnable.
+    // This handler will be used to run a periodic task to check for marker updates.
+    private val trackingHandler = Handler(Looper.getMainLooper())
+    private var trackingRunnable: Runnable? = null
+
+    // This map stores the last known location of a co-opted marker to calculate distance moved.
+    private val lastKnownLocations = HashMap<String, PointMapItem>()
 
     init {
         initViews()
@@ -192,6 +214,11 @@ class PluginDropDownReceiver (
             }
         }
 
+        // This comment explains the listener for the Co-Opt button.
+        // It follows the existing pattern of setting listeners in this function.
+        templateView.findViewById<ImageButton>(R.id.coOptButton).setOnClickListener {
+            showCoOptView(true)
+        }
     }
 
     private fun initRecyclerview() {
@@ -214,16 +241,18 @@ class PluginDropDownReceiver (
         // Set Template spinner list from json files.
         val spinner: Spinner = templateView.findViewById(R.id.spTemplate)
         templateItems.addAll(getTemplatesFromFolder())
-        val adapter: ArrayAdapter<TemplateDataModel> = object :
+        val validTemplateItems = templateItems.filter { it.template != null }
+
+        val spinnerAdapter: ArrayAdapter<TemplateDataModel> = object :
             ArrayAdapter<TemplateDataModel>(
                 pluginContext,
                 R.layout.spinner_item_layout,
-                templateItems
+                validTemplateItems
             ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val textView = super.getView(position, convertView, parent) as TextView
                 val item: TemplateDataModel? = getItem(position)
-                if (item != null) {
+                if (item?.template != null) {
                     textView.text = item.template.name
                 }
                 return textView
@@ -236,14 +265,14 @@ class PluginDropDownReceiver (
             ): View {
                 val textView = super.getDropDownView(position, convertView, parent) as TextView
                 val item: TemplateDataModel? = getItem(position)
-                if (item != null) {
+                if (item?.template != null) {
                     textView.text = item.template.name
                 }
                 return textView
             }
         }
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        spinner.adapter = adapter
+        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = spinnerAdapter
         spinner.setSelection(0)
         spinner.onItemSelectedListener = object : SimpleItemSelectedListener() {
             override fun onItemSelected(
@@ -361,7 +390,8 @@ class PluginDropDownReceiver (
             }
             findViewById<Button>(R.id.btnReCalculate).setOnClickListener {
                 if (markersList.isNotEmpty() && itemPositionForEdit != -1) {
-                    val marker = markersList[itemPositionForEdit].markerDetails
+                    val markerDataModel = markersList[itemPositionForEdit]
+                    var marker = markerDataModel.markerDetails
                     Log.d(TAG, "initRadioSettingView : marker : $marker \nbefore update ${markersList[itemPositionForEdit]}")
                     val isEdit =
                         (marker.transmitter?.alt.toString() != etRadioHeight.text.toString() && etRadioHeight.text.isNotEmpty()) ||
@@ -1506,6 +1536,16 @@ class PluginDropDownReceiver (
     }
 
     private fun removeMarker(marker:MarkerDataModel){
+        // This comment explains the new logic to handle co-opted marker deletion.
+        // If the deleted marker was a co-opted one, remove it from the tracking map.
+        marker.coopted_uid?.let {
+            coOptedMarkers.remove(it)
+            // If no co-opted markers are left, stop the tracking loop.
+            if (coOptedMarkers.isEmpty()) {
+                stopTrackingLoop()
+            }
+        }
+
         // remove marker from list
         removeMarkerFromList(marker)
         // remove marker from map
@@ -1518,7 +1558,9 @@ class PluginDropDownReceiver (
     override fun onDropDownVisible(v: Boolean) {}
 
     override fun onDropDownSizeChanged(width: Double, height: Double) {}
-    override fun onDropDownClose() {}
+    override fun onDropDownClose() {
+        stopTrackingLoop()
+    }
 
     companion object {
         const val TAG = "SOOTHSAYER"
@@ -1695,5 +1737,236 @@ class PluginDropDownReceiver (
         for (it in mapView.rootGroup.items)
             if (it.title == "AZIMUTH")
                 mapView.rootGroup.removeItem(it)
+    }
+
+    private fun showCoOptView(show: Boolean) {
+        if (show) {
+            mainLayout.visibility = View.GONE
+            coOptView.visibility = View.VISIBLE
+            populateCoOptList()
+        } else {
+            coOptView.visibility = View.GONE
+            mainLayout.visibility = View.VISIBLE
+        }
+    }
+    
+    private fun populateCoOptList() {
+        val coOptRecyclerView = coOptView.findViewById<RecyclerView>(R.id.co_opt_recycler_view)
+        coOptRecyclerView.layoutManager = LinearLayoutManager(pluginContext)
+
+        // This is the definitive, corrected logic to find all friendly ATAK contacts on the map.
+        val allMapItems = mapView.rootGroup.items
+        val callsignMarkers = allMapItems.filter { it.type == "a-f-G-U" }.toMutableList()
+        
+        // Add self marker to the list if not already present.
+        val self = mapView.selfMarker
+        if (!callsignMarkers.any { it.uid == self.uid }) {
+            callsignMarkers.add(self)
+        }
+
+        val coOptAdapter = CoOptAdapter(pluginContext, callsignMarkers, templateItems) {
+            createTemplateSpinnerAdapter()
+        }
+        coOptRecyclerView.adapter = coOptAdapter
+
+        coOptView.findViewById<Button>(R.id.co_opt_cancel_button).setOnClickListener {
+            showCoOptView(false)
+        }
+        coOptView.findViewById<Button>(R.id.co_opt_ok_button).setOnClickListener {
+            for ((uid, config) in coOptAdapter.coOptConfigurations) {
+                // Remove any previous entry for this co-opted marker to prevent duplicates.
+                markersList.removeAll { it.coopted_uid == uid }
+
+                if (config.isEnabled && config.template != null) {
+                    val originalMarker = callsignMarkers.find { it.uid == uid } as? Marker ?: continue
+                    val callsign = originalMarker.getMetaString("callsign", "marker")
+
+                    val newMarkerData = MarkerDataModel(
+                        markerID = UUID.randomUUID().toString(),
+                        markerDetails = config.template!!.copy(
+                            template = config.template!!.template.copy(
+                                name = "$callsign - ${config.template!!.template.name}"
+                            ),
+                            transmitter = config.template!!.transmitter?.copy(
+                                lat = originalMarker.point.latitude,
+                                lon = originalMarker.point.longitude
+                            )
+                        ),
+                        coopted_uid = uid
+                    )
+                    markersList.add(newMarkerData)
+
+                    val settings = CoOptedMarkerSettings(
+                        uid = uid,
+                        template = config.template!!,
+                        refreshIntervalSeconds = null,
+                        refreshDistanceMeters = null
+                    )
+                    coOptedMarkers[uid] = settings
+                } else {
+                    coOptedMarkers.remove(uid)
+                }
+            }
+            
+            markerAdapter?.notifyDataSetChanged()
+
+            if (coOptedMarkers.isNotEmpty()) {
+                startTrackingLoop()
+            } else {
+                stopTrackingLoop()
+            }
+            
+            showCoOptView(false)
+        }
+    }
+
+    private fun createTemplateSpinnerAdapter(): ArrayAdapter<TemplateDataModel> {
+        val validTemplates = templateItems.filter { it.template != null }
+        val adapter: ArrayAdapter<TemplateDataModel> = object :
+            ArrayAdapter<TemplateDataModel>(
+                pluginContext,
+                R.layout.spinner_item_layout,
+                validTemplates
+            ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val textView = super.getView(position, convertView, parent) as TextView
+                getItem(position)?.template?.name?.let {
+                    textView.text = it
+                }
+                return textView
+            }
+
+            override fun getDropDownView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View {
+                val textView = super.getDropDownView(position, convertView, parent) as TextView
+                getItem(position)?.template?.name?.let {
+                    textView.text = it
+                }
+                return textView
+            }
+        }
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        return adapter
+    }
+
+    private fun startTrackingLoop() {
+        stopTrackingLoop() // Always stop the old one first.
+
+        // This is the definitive fix for the loop.
+        // It performs an immediate calculation and then correctly schedules the ongoing loop.
+        
+        // Step 1: Immediately calculate for all markers.
+        runCoOptUpdate()
+        
+        // Step 2: Start the background loop for future updates.
+        val timeCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_time_checkbox)
+        val nextUpdateTextView = templateView.findViewById<TextView>(R.id.co_opt_next_update_textview)
+        
+        if (!timeCheckbox.isChecked) {
+            nextUpdateTextView.visibility = View.GONE
+            // For distance-only checks, we'll rely on a less frequent, simple loop
+            trackingRunnable = createDistanceCheckRunnable(true) // Pass true to calculate
+            trackingHandler.postDelayed(trackingRunnable as Runnable, 5000) // Start after 5s
+            return
+        }
+
+        // This is the logic for the timed interval, including the countdown.
+        val universalTimeEditText = coOptView.findViewById<EditText>(R.id.co_opt_universal_time_edittext)
+        val refreshIntervalSeconds = universalTimeEditText.text.toString().toLongOrNull() ?: 300L
+        nextUpdateTextView.visibility = View.VISIBLE
+
+        trackingRunnable = object : Runnable {
+            var countdown = refreshIntervalSeconds
+            override fun run() {
+                nextUpdateTextView.text = "Next update in... ${countdown}s"
+                if (countdown <= 0) {
+                    runCoOptUpdate()
+                    countdown = refreshIntervalSeconds
+                } else {
+                    countdown--
+                }
+                trackingHandler.postDelayed(this, 1000)
+            }
+        }
+        trackingHandler.post(trackingRunnable as Runnable)
+    }
+
+    /**
+     * This is the definitive update function. It finds all co-opted markers,
+     * updates their positions, and calls calculate() on them.
+     */
+    private fun runCoOptUpdate() {
+        Constant.sAccessToken = sharedPrefs?.get(Constant.PreferenceKey.sApiKey, "").toString()
+        var lastUpdatedMarker: MarkerDataModel? = null
+        for ((uid, _) in coOptedMarkers) {
+            val markerInList = markersList.find { it.coopted_uid == uid }
+            val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem
+            if (markerInList != null && currentMarker != null) {
+                markerInList.markerDetails.transmitter?.lat = currentMarker.point.latitude
+                markerInList.markerDetails.transmitter?.lon = currentMarker.point.longitude
+                val index = markersList.indexOf(markerInList)
+                if (index != -1) {
+                    markerAdapter?.notifyItemChanged(index)
+                    lastUpdatedMarker = markerInList // Keep track of the last marker we updated
+                }
+            }
+        }
+
+        // After updating all positions, run one single calculation for the entire list,
+        // using the last updated marker as the reference, just like the main calculate button.
+        if (lastUpdatedMarker != null) {
+            calculate(lastUpdatedMarker)
+        }
+    }
+
+    private fun createDistanceCheckRunnable(shouldCalculate: Boolean): Runnable {
+        return Runnable {
+            Constant.sAccessToken = sharedPrefs?.get(Constant.PreferenceKey.sApiKey, "").toString()
+
+            for ((uid, settings) in coOptedMarkers) {
+                val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem ?: continue
+                var needsUpdate = false
+                
+                if (settings.refreshIntervalSeconds != null) {
+                    needsUpdate = true
+                } else if (settings.refreshDistanceMeters != null) {
+                    val lastLocation = lastKnownLocations[uid]
+                    if (lastLocation == null) {
+                        lastKnownLocations[uid] = currentMarker
+                    } else {
+                        if (lastLocation.point.distanceTo(currentMarker.point) >= settings.refreshDistanceMeters) {
+                            needsUpdate = true
+                            lastKnownLocations[uid] = currentMarker
+                        }
+                    }
+                }
+
+                if (needsUpdate) {
+                    val markerInList = markersList.find { it.coopted_uid == uid }
+                    if (markerInList != null) {
+                        markerInList.markerDetails.transmitter?.lat = currentMarker.point.latitude
+                        markerInList.markerDetails.transmitter?.lon = currentMarker.point.longitude
+                        val index = markersList.indexOf(markerInList)
+                        if (index != -1) {
+                            markerAdapter?.notifyItemChanged(index)
+                        }
+                        if (shouldCalculate) {
+                            calculate(markerInList)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopTrackingLoop() {
+        trackingRunnable?.let {
+            trackingHandler.removeCallbacks(it)
+            trackingRunnable = null
+        }
+        templateView.findViewById<TextView>(R.id.co_opt_next_update_textview).visibility = View.GONE
     }
 }
