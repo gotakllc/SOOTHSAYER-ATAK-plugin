@@ -219,6 +219,9 @@ class PluginDropDownReceiver (
         templateView.findViewById<ImageButton>(R.id.coOptButton).setOnClickListener {
             showCoOptView(true)
         }
+        templateView.findViewById<ImageButton>(R.id.stopCoOptButton).setOnClickListener {
+            stopTrackingLoop()
+        }
     }
 
     private fun initRecyclerview() {
@@ -511,24 +514,27 @@ class PluginDropDownReceiver (
 
 
     private fun calculate(item: MarkerDataModel?){
+        val showLinks = sharedPrefs?.get(Constant.PreferenceKey.sLinkLinesVisibility, true) ?: true
+        val showCoverage = sharedPrefs?.get(Constant.PreferenceKey.sKmzVisibility, true) ?: true
+        val useGpu = sharedPrefs?.get(Constant.PreferenceKey.sCalculationMode, false) ?: false
 
         // even if disabled
         removeLinkLinesFromMap(item);
 
-        if(!cbLinkLines.isChecked && !cbCoverageLayer.isChecked) {
+        if(!showLinks && !showCoverage) {
             toast("You need either links or coverage enabled")
             return
         }
 
         item?.let {
-            if(cbLinkLines.isChecked) {
+            if(showLinks) {
                 updateLinkLinesOnMarkerDragging(item)
             }
         }
 
 
         // Multisite API (GPU)
-        if (svMode.isChecked) {
+        if (useGpu) {
 
             // For multisite api
             item?.markerDetails?.let { template ->
@@ -595,7 +601,7 @@ class PluginDropDownReceiver (
                         template.environment,
                         template.output // because we updated it with bounds :)
                 )
-                if(cbCoverageLayer.isChecked){
+                if(showCoverage){
                     sendMultiSiteDataToServer(request)
                 }
             }
@@ -603,7 +609,7 @@ class PluginDropDownReceiver (
 //                          // Area API (CPU / GPU)
             item?.let {
                 // send marker position changed data to server.
-                if(cbCoverageLayer.isChecked) {
+                if(showCoverage) {
                     sendSingleSiteDataToServer(item.markerDetails)
                 }
             }
@@ -1315,6 +1321,7 @@ class PluginDropDownReceiver (
     }
 
     public override fun disposeImpl() {
+        stopTrackingLoop()
         try {
             if (singleSiteCloudRFLayer != null) {
                 mapView.removeLayer(
@@ -1559,7 +1566,6 @@ class PluginDropDownReceiver (
 
     override fun onDropDownSizeChanged(width: Double, height: Double) {}
     override fun onDropDownClose() {
-        stopTrackingLoop()
     }
 
     companion object {
@@ -1773,6 +1779,14 @@ class PluginDropDownReceiver (
             showCoOptView(false)
         }
         coOptView.findViewById<Button>(R.id.co_opt_ok_button).setOnClickListener {
+            val timeCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_time_checkbox)
+            val universalTimeEditText = coOptView.findViewById<EditText>(R.id.co_opt_universal_time_edittext)
+            val distanceCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_distance_checkbox)
+            val distanceEditText = coOptView.findViewById<EditText>(R.id.co_opt_distance_edittext)
+
+            val refreshInterval = if (timeCheckbox.isChecked) universalTimeEditText.text.toString().toLongOrNull() else null
+            val refreshDistance = if (distanceCheckbox.isChecked) distanceEditText.text.toString().toDoubleOrNull() else null
+
             for ((uid, config) in coOptAdapter.coOptConfigurations) {
                 // Remove any previous entry for this co-opted marker to prevent duplicates.
                 markersList.removeAll { it.coopted_uid == uid }
@@ -1799,8 +1813,8 @@ class PluginDropDownReceiver (
                     val settings = CoOptedMarkerSettings(
                         uid = uid,
                         template = config.template!!,
-                        refreshIntervalSeconds = null,
-                        refreshDistanceMeters = null
+                        refreshIntervalSeconds = refreshInterval,
+                        refreshDistanceMeters = refreshDistance
                     )
                     coOptedMarkers[uid] = settings
                 } else {
@@ -1855,39 +1869,44 @@ class PluginDropDownReceiver (
     private fun startTrackingLoop() {
         stopTrackingLoop() // Always stop the old one first.
 
-        // This is the definitive fix for the loop.
-        // It performs an immediate calculation and then correctly schedules the ongoing loop.
-        
-        // Step 1: Immediately calculate for all markers.
-        runCoOptUpdate()
-        
-        // Step 2: Start the background loop for future updates.
+        runCoOptUpdate() // Perform an immediate update for all markers.
+
         val timeCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_time_checkbox)
-        val nextUpdateTextView = templateView.findViewById<TextView>(R.id.co_opt_next_update_textview)
-        
-        if (!timeCheckbox.isChecked) {
-            nextUpdateTextView.visibility = View.GONE
-            // For distance-only checks, we'll rely on a less frequent, simple loop
-            trackingRunnable = createDistanceCheckRunnable(true) // Pass true to calculate
-            trackingHandler.postDelayed(trackingRunnable as Runnable, 5000) // Start after 5s
+        val distanceCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_distance_checkbox)
+
+        if (!timeCheckbox.isChecked && !distanceCheckbox.isChecked) {
             return
         }
 
-        // This is the logic for the timed interval, including the countdown.
+        templateView.findViewById<ImageButton>(R.id.stopCoOptButton).visibility = View.VISIBLE
+
+        val nextUpdateTextView = templateView.findViewById<TextView>(R.id.co_opt_next_update_textview)
         val universalTimeEditText = coOptView.findViewById<EditText>(R.id.co_opt_universal_time_edittext)
         val refreshIntervalSeconds = universalTimeEditText.text.toString().toLongOrNull() ?: 300L
-        nextUpdateTextView.visibility = View.VISIBLE
 
         trackingRunnable = object : Runnable {
-            var countdown = refreshIntervalSeconds
+            var countdown = if (timeCheckbox.isChecked) refreshIntervalSeconds else Long.MAX_VALUE
+
             override fun run() {
-                nextUpdateTextView.text = "Next update in... ${countdown}s"
-                if (countdown <= 0) {
-                    runCoOptUpdate()
-                    countdown = refreshIntervalSeconds
+                var periodicUpdateJustHappened = false
+                if (timeCheckbox.isChecked) {
+                    nextUpdateTextView.visibility = View.VISIBLE
+                    nextUpdateTextView.text = "Next update in... ${countdown}s"
+                    if (countdown <= 0) {
+                        runCoOptUpdate()
+                        countdown = refreshIntervalSeconds
+                        periodicUpdateJustHappened = true
+                    } else {
+                        countdown--
+                    }
                 } else {
-                    countdown--
+                    nextUpdateTextView.visibility = View.GONE
                 }
+
+                if (distanceCheckbox.isChecked && !periodicUpdateJustHappened) {
+                    checkDistanceAndRecalculate()
+                }
+
                 trackingHandler.postDelayed(this, 1000)
             }
         }
@@ -1922,29 +1941,19 @@ class PluginDropDownReceiver (
         }
     }
 
-    private fun createDistanceCheckRunnable(shouldCalculate: Boolean): Runnable {
-        return Runnable {
-            Constant.sAccessToken = sharedPrefs?.get(Constant.PreferenceKey.sApiKey, "").toString()
+    private fun checkDistanceAndRecalculate() {
+        var needsRecalculation = false
+        var lastUpdatedMarkerForRecalc: MarkerDataModel? = null
 
-            for ((uid, settings) in coOptedMarkers) {
-                val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem ?: continue
-                var needsUpdate = false
-                
-                if (settings.refreshIntervalSeconds != null) {
-                    needsUpdate = true
-                } else if (settings.refreshDistanceMeters != null) {
-                    val lastLocation = lastKnownLocations[uid]
-                    if (lastLocation == null) {
-                        lastKnownLocations[uid] = currentMarker
-                    } else {
-                        if (lastLocation.point.distanceTo(currentMarker.point) >= settings.refreshDistanceMeters) {
-                            needsUpdate = true
-                            lastKnownLocations[uid] = currentMarker
-                        }
-                    }
-                }
+        for ((uid, settings) in coOptedMarkers) {
+            val refreshDistance = settings.refreshDistanceMeters ?: continue
+            val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem ?: continue
+            val lastLocation = lastKnownLocations[uid]
 
-                if (needsUpdate) {
+            if (lastLocation == null) {
+                lastKnownLocations[uid] = currentMarker
+            } else {
+                if (lastLocation.point.distanceTo(currentMarker.point) >= refreshDistance) {
                     val markerInList = markersList.find { it.coopted_uid == uid }
                     if (markerInList != null) {
                         markerInList.markerDetails.transmitter?.lat = currentMarker.point.latitude
@@ -1953,12 +1962,16 @@ class PluginDropDownReceiver (
                         if (index != -1) {
                             markerAdapter?.notifyItemChanged(index)
                         }
-                        if (shouldCalculate) {
-                            calculate(markerInList)
-                        }
+                        needsRecalculation = true
+                        lastUpdatedMarkerForRecalc = markerInList
                     }
+                    lastKnownLocations[uid] = currentMarker
                 }
             }
+        }
+
+        if (needsRecalculation && lastUpdatedMarkerForRecalc != null) {
+            calculate(lastUpdatedMarkerForRecalc)
         }
     }
 
@@ -1968,5 +1981,6 @@ class PluginDropDownReceiver (
             trackingRunnable = null
         }
         templateView.findViewById<TextView>(R.id.co_opt_next_update_textview).visibility = View.GONE
+        templateView.findViewById<ImageButton>(R.id.stopCoOptButton).visibility = View.GONE
     }
 }
