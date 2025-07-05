@@ -7,22 +7,32 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="8dp">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Co-Opt Callsigns"
+        android:text="Co-Opt Callsigns / Markers"
         android:textAppearance="?android:attr/textAppearanceLarge"
-        android:layout_marginBottom="16dp" />
+        android:layout_marginBottom="8dp" />
+
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Refresh Heatmap Intervals"
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginBottom="8dp">
+        android:layout_marginBottom="12dp">
 
+        <!-- Time Refresh Section -->
         <CheckBox
             android:id="@+id/co_opt_time_checkbox"
             android:layout_width="wrap_content"
@@ -32,26 +42,22 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Refresh Interval (s)"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+            android:text="Time (s)"
+            android:textSize="12sp"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
 
         <EditText
             android:id="@+id/co_opt_universal_time_edittext"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
+            android:layout_width="50dp"
+            android:layout_height="32dp"
             android:inputType="number"
             android:text="300"
-            android:layout_marginStart="8dp" />
-    </LinearLayout>
+            android:textSize="12sp"
+            android:padding="4dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="16dp" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="16dp">
-
+        <!-- Distance Refresh Section -->
         <CheckBox
             android:id="@+id/co_opt_distance_checkbox"
             android:layout_width="wrap_content"
@@ -60,23 +66,41 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Refresh on Movement (m)"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+            android:text="Move (m)"
+            android:textSize="12sp"
+            android:textAppearance="?android:attr/textAppearanceSmall" />
 
         <EditText
             android:id="@+id/co_opt_distance_edittext"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
+            android:layout_width="50dp"
+            android:layout_height="32dp"
             android:inputType="number"
             android:text="100"
-            android:layout_marginStart="8dp" />
+            android:textSize="12sp"
+            android:padding="4dp"
+            android:layout_marginStart="4dp" />
     </LinearLayout>
+
+    <EditText
+        android:id="@+id/co_opt_search_edittext"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:hint="Search markers by name..."
+        android:inputType="text"
+        android:drawableStart="@android:drawable/ic_menu_search"
+        android:drawablePadding="6dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:layout_marginBottom="12dp"
+        android:textSize="14sp"
+        android:background="@android:color/transparent" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/co_opt_recycler_view"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
         android:layout_weight="1" />
 
     <LinearLayout
@@ -88,17 +112,19 @@
         <Button
             android:id="@+id/co_opt_cancel_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_height="36dp"
+            android:layout_weight="0.5"
             android:text="Cancel"
+            android:textSize="14sp"
             style="?android:attr/buttonBarButtonStyle" />
 
         <Button
             android:id="@+id/co_opt_ok_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_height="36dp"
+            android:layout_weight="0.5"
             android:text="OK"
+            android:textSize="14sp"
             style="?android:attr/buttonBarButtonStyle" />
     </LinearLayout>
 
