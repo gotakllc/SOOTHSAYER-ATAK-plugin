@@ -14,10 +14,81 @@ ATAK_PACKAGE="com.atakmap.app.civ"
 echo "=== $PLUGIN_NAME Plugin Builder & Multi-Device Installer ==="
 echo ""
 
+# Configure Java 17
+echo "Configuring Java 17 for build..."
+
+# Function to find Java 17 installation
+find_java17() {
+    local java_candidates=(
+        "/usr/lib/jvm/java-17-openjdk"
+        "/usr/lib/jvm/java-17-openjdk-amd64"
+        "/usr/lib/jvm/adoptium-17-hotspot"
+        "/usr/lib/jvm/temurin-17-jdk"
+        "/opt/homebrew/opt/openjdk@17"
+        "/usr/local/opt/openjdk@17"
+        "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home"
+        "/Library/Java/JavaVirtualMachines/adoptopenjdk-17.jdk/Contents/Home"
+        "/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home"
+    )
+    
+    # First try to find Java 17 using java_home (macOS)
+    if command -v /usr/libexec/java_home &> /dev/null; then
+        if JAVA17_HOME=$(/usr/libexec/java_home -v 17 2>/dev/null); then
+            echo "$JAVA17_HOME"
+            return 0
+        fi
+    fi
+    
+    # Try common installation paths
+    for candidate in "${java_candidates[@]}"; do
+        if [ -d "$candidate" ] && [ -x "$candidate/bin/java" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Find and set Java 17
+if JAVA17_HOME=$(find_java17); then
+    export JAVA_HOME="$JAVA17_HOME"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    echo "✓ Found Java 17 at: $JAVA_HOME"
+else
+    echo "Error: Java 17 not found!"
+    echo "Please install Java 17 using one of these methods:"
+    echo "  • macOS: brew install openjdk@17"
+    echo "  • Ubuntu/Debian: sudo apt install openjdk-17-jdk"
+    echo "  • CentOS/RHEL: sudo yum install java-17-openjdk-devel"
+    echo "  • Or download from: https://adoptium.net/temurin/releases/"
+    exit 1
+fi
+
+# Verify Java version
+JAVA_VERSION=$(java -version 2>&1 | head -1 | cut -d'"' -f2)
+echo "Using Java version: $JAVA_VERSION"
+
+if [[ ! "$JAVA_VERSION" =~ ^17\. ]]; then
+    echo "Warning: Java version is $JAVA_VERSION, expected 17.x"
+    echo "Continuing anyway..."
+fi
+
+echo ""
+
+# Verify Java is accessible
+echo "Verifying Java 17 is accessible..."
+if ! "$JAVA_HOME/bin/java" -version 2>&1 | grep -q "17\."; then
+    echo "Error: Java 17 verification failed at $JAVA_HOME"
+    exit 1
+fi
+echo "✓ Java 17 verified and ready for build"
+echo ""
+
 # Step 1: Build the plugin
 echo "Step 1: Building $PLUGIN_NAME plugin..."
-echo "Running: ./gradlew clean assembleCivDebug"
-./gradlew clean assembleCivDebug
+echo "Running: ./gradlew clean assembleCivDebug with Java 17"
+./gradlew clean assembleCivDebug -Dorg.gradle.java.home="$JAVA_HOME"
 
 if [ $? -ne 0 ]; then
     echo "Error: Build failed!"

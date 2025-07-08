@@ -89,6 +89,10 @@ class PluginDropDownReceiver(
     private val svMode: Switch = settingView.findViewById(R.id.svMode)
     private val cbCoverageLayer: CheckBox = settingView.findViewById(R.id.cbKmzLayer)
     private val cbLinkLines: CheckBox = settingView.findViewById(R.id.cbLinkLines)
+    private val cbCoOptTimeRefresh: CheckBox = settingView.findViewById(R.id.cbCoOptTimeRefresh)
+    private val etCoOptTimeInterval: EditText = settingView.findViewById(R.id.etCoOptTimeInterval)
+    private val cbCoOptDistanceRefresh: CheckBox = settingView.findViewById(R.id.cbCoOptDistanceRefresh)
+    private val etCoOptDistanceThreshold: EditText = settingView.findViewById(R.id.etCoOptDistanceThreshold)
     private val loginView = templateView.findViewById<LinearLayout>(R.id.ilLogin)
 
     private var etLoginServerUrl: EditText? = null
@@ -161,6 +165,28 @@ class PluginDropDownReceiver(
         val linksCB = settingView.findViewById<CheckBox>(R.id.cbLinkLines)
         linksCB.setOnClickListener{
             sharedPrefs?.set(Constant.PreferenceKey.sLinkLinesVisibility, cbLinkLines.isChecked)
+        }
+
+        val coOptTimeRefreshCB = settingView.findViewById<CheckBox>(R.id.cbCoOptTimeRefresh)
+        coOptTimeRefreshCB.setOnClickListener{
+            sharedPrefs?.set(Constant.PreferenceKey.sCoOptTimeRefreshEnabled, cbCoOptTimeRefresh.isChecked)
+        }
+
+        val coOptTimeIntervalET = settingView.findViewById<EditText>(R.id.etCoOptTimeInterval)
+        coOptTimeIntervalET.addTextChangedListener {
+            val value = it.toString().toLongOrNull() ?: 300L
+            sharedPrefs?.set(Constant.PreferenceKey.sCoOptTimeRefreshInterval, value)
+        }
+
+        val coOptDistanceRefreshCB = settingView.findViewById<CheckBox>(R.id.cbCoOptDistanceRefresh)
+        coOptDistanceRefreshCB.setOnClickListener{
+            sharedPrefs?.set(Constant.PreferenceKey.sCoOptDistanceRefreshEnabled, cbCoOptDistanceRefresh.isChecked)
+        }
+
+        val coOptDistanceThresholdET = settingView.findViewById<EditText>(R.id.etCoOptDistanceThreshold)
+        coOptDistanceThresholdET.addTextChangedListener {
+            val value = it.toString().toDoubleOrNull() ?: 100.0
+            sharedPrefs?.set(Constant.PreferenceKey.sCoOptDistanceRefreshThreshold, value)
         }
 
         val tvHelp = settingView.findViewById<ImageButton>(R.id.tvHelp)
@@ -968,6 +994,10 @@ class PluginDropDownReceiver(
         svMode.isChecked = sharedPrefs?.get(Constant.PreferenceKey.sCalculationMode, false) ?: false
         cbCoverageLayer.isChecked = sharedPrefs?.get(Constant.PreferenceKey.sKmzVisibility, true) ?: true
         cbLinkLines.isChecked = sharedPrefs?.get(Constant.PreferenceKey.sLinkLinesVisibility, true) ?: true
+        cbCoOptTimeRefresh.isChecked = sharedPrefs?.get(Constant.PreferenceKey.sCoOptTimeRefreshEnabled, true) ?: true
+        etCoOptTimeInterval.setText((sharedPrefs?.get(Constant.PreferenceKey.sCoOptTimeRefreshInterval, 300L) ?: 300L).toString())
+        cbCoOptDistanceRefresh.isChecked = sharedPrefs?.get(Constant.PreferenceKey.sCoOptDistanceRefreshEnabled, false) ?: false
+        etCoOptDistanceThreshold.setText((sharedPrefs?.get(Constant.PreferenceKey.sCoOptDistanceRefreshThreshold, 100.0) ?: 100.0).toString())
     }
 
     fun addSingleKMZLayer(layerName: String, filePath: String, bounds: List<Double>) {
@@ -1759,13 +1789,9 @@ class PluginDropDownReceiver(
             showCoOptView(false)
         }
         coOptView.findViewById<Button>(R.id.co_opt_ok_button).setOnClickListener {
-            val timeCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_time_checkbox)
-            val universalTimeEditText = coOptView.findViewById<EditText>(R.id.co_opt_universal_time_edittext)
-            val distanceCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_distance_checkbox)
-            val distanceEditText = coOptView.findViewById<EditText>(R.id.co_opt_distance_edittext)
-
-            val refreshInterval = if (timeCheckbox.isChecked) universalTimeEditText.text.toString().toLongOrNull() else null
-            val refreshDistance = if (distanceCheckbox.isChecked) distanceEditText.text.toString().toDoubleOrNull() else null
+            // Get refresh settings from main settings instead of co-opt dialog
+            val refreshInterval = sharedPrefs?.get(Constant.PreferenceKey.sCoOptTimeRefreshInterval, 300L) ?: 300L
+            val refreshDistance = sharedPrefs?.get(Constant.PreferenceKey.sCoOptDistanceRefreshThreshold, 100.0) ?: 100.0
 
             for ((uid, config) in coOptAdapter.coOptConfigurations) {
                 markersList.removeAll { it.coopted_uid == uid }
@@ -1870,15 +1896,15 @@ class PluginDropDownReceiver(
 
         runCoOptUpdate()
 
-        val timeCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_time_checkbox)
-        val distanceCheckbox = coOptView.findViewById<CheckBox>(R.id.co_opt_distance_checkbox)
+        val timeEnabled = sharedPrefs?.get(Constant.PreferenceKey.sCoOptTimeRefreshEnabled, true) ?: true
+        val distanceEnabled = sharedPrefs?.get(Constant.PreferenceKey.sCoOptDistanceRefreshEnabled, false) ?: false
 
-        if (!timeCheckbox.isChecked && !distanceCheckbox.isChecked) {
+        if (!timeEnabled && !distanceEnabled) {
             return
         }
 
         // Initialize lastKnownLocations with current positions when starting tracking
-        if (distanceCheckbox.isChecked) {
+        if (distanceEnabled) {
             for ((uid, _) in coOptedMarkers) {
                 val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem
                 if (currentMarker != null) {
@@ -1891,15 +1917,14 @@ class PluginDropDownReceiver(
         templateView.findViewById<ImageButton>(R.id.stopCoOptButton).visibility = View.VISIBLE
 
         val nextUpdateTextView = templateView.findViewById<TextView>(R.id.co_opt_next_update_textview)
-        val universalTimeEditText = coOptView.findViewById<EditText>(R.id.co_opt_universal_time_edittext)
-        val refreshIntervalSeconds = universalTimeEditText.text.toString().toLongOrNull() ?: 300L
+        val refreshIntervalSeconds = sharedPrefs?.get(Constant.PreferenceKey.sCoOptTimeRefreshInterval, 300L) ?: 300L
 
         trackingRunnable = object : Runnable {
-            var countdown = if (timeCheckbox.isChecked) refreshIntervalSeconds else Long.MAX_VALUE
+            var countdown = if (timeEnabled) refreshIntervalSeconds else Long.MAX_VALUE
 
             override fun run() {
                 var periodicUpdateJustHappened = false
-                if (timeCheckbox.isChecked) {
+                if (timeEnabled) {
                     nextUpdateTextView.visibility = View.VISIBLE
                     nextUpdateTextView.text = "Next update in... ${countdown}s"
                     if (countdown <= 0) {
@@ -1913,7 +1938,7 @@ class PluginDropDownReceiver(
                     nextUpdateTextView.visibility = View.GONE
                 }
 
-                if (distanceCheckbox.isChecked && !periodicUpdateJustHappened) {
+                if (distanceEnabled && !periodicUpdateJustHappened) {
                     checkDistanceAndRecalculate()
                 }
 
@@ -1950,8 +1975,9 @@ class PluginDropDownReceiver(
         var needsRecalculation = false
         var lastUpdatedMarkerForRecalc: MarkerDataModel? = null
 
+        val refreshDistance = sharedPrefs?.get(Constant.PreferenceKey.sCoOptDistanceRefreshThreshold, 100.0) ?: 100.0
+
         for ((uid, settings) in coOptedMarkers) {
-            val refreshDistance = settings.refreshDistanceMeters ?: continue
             val currentMarker = mapView.rootGroup.deepFindItem("uid", uid) as? PointMapItem ?: continue
             val lastLocation = lastKnownLocations[uid]
 
